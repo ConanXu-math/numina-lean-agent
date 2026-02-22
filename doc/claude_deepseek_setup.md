@@ -87,12 +87,10 @@ claude
 示例（在项目根目录执行）：
 
 ```bash
-python -m scripts.run_claude run leanproblems/Minif2f/mathd_algebra_478.lean \
-  --prompt-file config/prompt_complete_file.txt \
-  --max-rounds 5
+python -m scripts.run_claude run leanproblems/Minif2f/mathd_numbertheory_284.lean \
+  --prompt_file prompts/prompt_complete_file.txt \
+  --max_rounds 5
 ```
-
-批量运行：
 
 ```bash
 python -m scripts.run_claude batch config/config_minif2f.yaml
@@ -135,6 +133,12 @@ export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
 - 确认配置文件路径是项目内 `./.claude/settings.json`
 - 确认在项目目录启动 `claude`
 - 用 `/status` 再次核对当前配置
+
+### 8.5 `Either prompt or prompt_file must be provided`
+
+- 常见原因是 `--prompt_file` 路径写错
+- 本项目正确路径是 `prompts/prompt_complete_file.txt`，不是 `config/prompt_complete_file.txt`
+- 可先运行 `ls prompts` 确认文件存在后再执行命令
 
 ## 9. 安全建议
 
