@@ -1,0 +1,413 @@
+我想将这篇论文用lean4形式化，之前optlib已经形式化了经典admm，经典admm可以证明收敛到kkt点，但是我自适应的admm只能到子序列收敛到kkt点，过不去了
+附加了 10 个文件。
+- A_1004603514434.pdf
+- AdaptiveConvergence.lean
+- AdaptiveInv_bounded.lean
+- AdaptiveLemmas.lean
+- AdaptiveScheme.lean
+- AdaptiveTheorem_converge.lean
+- Inv_bounded.lean
+- Lemma.lean
+- Scheme.lean
+- Theorem_converge.lean
+
+
+chat
+这是非常典型且具有挑战性的形式化问题。你已经完成了最困难的部分：证明了残差收敛（HWY_Convergence_1）和子序列收敛到 KKT 点（Subseq）。
+
+经典 ADMM 使用 Fejér 单调性（距离是单调递减的）来证明全序列收敛。但在自适应 ADMM 中，由于罚参数 $\rho_n$ 会变化，距离函数不再单调。
+
+然而，根据 He, Yang, Wang (2000) 的论文（公式 51-53），尽管距离不是单调的，但它满足 Quasi-Fejér 单调性（即 $E_{n+1} \le (1 + \eta_n^2) E_n$）。这是证明全序列收敛的关键。
+
+以下是解决此问题的 Lean 4 代码方案。你需要将其添加到 AdaptiveTheorem_converge.lean 的末尾（在 end 之前）。
+
+核心思路
+定义 Lyapunov 函数 (Energy Function)：对应论文中的公式 (50) 或 (53)，即 $V_n(z^) = |\lambda^n - \lambda^|^2 + \dots$。
+证明 Quasi-Fejér 性质：利用你已经在 AdaptiveLemmas.lean 中证明的 HWY_ineq_51 等引理，推导出 $V_{n+1} \le (1 + \eta_n^2) V_n$。
+引用 Robbins-Siegmund 类引理：证明如果 $u_{n+1} \le (1+a_n)u_n$ 且 $\sum a_n < \infty$，则 $\lim u_n$ 存在。
+结合子序列极限：既然 $\lim_{n \to \infty} V_n$ 存在，且你已经证明存在一个子序列 $V_{\phi(n)} \to 0$（因为子序列收敛到 $z^*$），那么全序列极限必须为 0。
+Lean 4 代码实现
+请将以下代码插入到 AdaptiveTheorem_converge.lean 文件中 ADMM_convergence 定理之前。
+
+section Full_Convergence
+
+-- 1. 定义关于特定 KKT 点 (x₁*, x₂*, y*) 的 Lyapunov 能量函数
+-- 对应论文公式 (50)/(53) 左侧的项，这是衡量当前点与最优解距离的度量
+def Lyapunov_Energy (n : ℕ) : ℝ :=
+  ‖y n - y''‖^2 +
+  admm.τ * (admm.ρₙ n)^2 * ‖A₂ (x₂ n - x₂'')‖^2 +
+  admm.τ * (T_HWY - admm.τ) * (admm.ρₙ n)^2 * ‖A₁ (x₁ n) + A₂ (x₂ n) - admm.b‖^2
+
+-- 2. 辅助数学引理：拟单调序列的收敛性
+-- 如果 u_{n+1} ≤ (1 + a_n) u_n 且 a_n 可求和，则 u_n 收敛
+lemma convergence_of_quasi_monotone_sequence {u : ℕ → ℝ} {a : ℕ → ℝ}
+    (hu : ∀ n, u n ≥ 0) (ha : ∀ n, a n ≥ 0) (ha_sum : Summable a)
+    (h_ineq : ∀ n, u (n + 1) ≤ (1 + a n) * u n) :
+    ∃ l, Tendsto u atTop (nhds l) := by
+  -- 这里可以使用 Mathlib 中关于 infinite products 或者通过对数变换证明
+  -- 为了简洁，这里给出一个基于 limsup/liminf 的简略思路或者直接使用 infinite product 的性质
+  -- 在 Lean 中通常转化为 ∏(1+a_n) 有界来证明 u_n 有界，然后利用 bounded + quasi-decreasing
+  -- 这里假设你引入了相关数学库或者作为 sorry 略过纯数学引理
+  sorry
+
+-- 3. 证明 Lyapunov 能量满足 Quasi-Fejér 不等式
+-- 基于 AdaptiveLemmas.lean 中的 HWY_ineq_51 (稍作调整以适应 x*, y*)
+lemma Energy_Quasi_Fejer [Condition_C1 admm admm_kkt] :
+    ∀ n, Lyapunov_Energy (n + 1) ≤ (1 + (η_k n)^2) * Lyapunov_Energy n := by
+  intro n
+  -- 这步需要利用 HWY_ineq_51 的推导逻辑，但是将其中的 residuals 替换回 KKT 点距离
+  -- 论文公式 (51) 实际上就是这个不等式的具体形式
+  -- 注意：HWY_ineq_51 也就是 AdaptiveLemmas.lean 中的结论
+  -- 我们只需要扔掉负项（残差项），不等号依然成立
+  have h_main := HWY_ineq_51 n -- 需要确保 HWY_ineq_51 是针对任意解的，或者这里的 y''
+  -- 注意：AdaptiveLemmas 中的推导是针对相邻项的，你需要确认是否已有针对最优解 (x*, y*) 的引理
+  -- 论文定理 3.1 (公式 33) 是针对任意 λ* 的。
+  -- 假设 AdaptiveLemmas 中有类似 structure，这里直接应用不等式放缩：
+  -- V_{k+1} ≤ (1+η^2)V_k - (残差) ≤ (1+η^2)V_k
+  sorry 
+
+-- 4. 证明全序列能量收敛
+lemma Energy_Converges [Condition_C1 admm admm_kkt] :
+    ∃ l, Tendsto Lyapunov_Energy atTop (nhds l) := by
+  apply convergence_of_quasi_monotone_sequence
+  · intro n; dsimp [Lyapunov_Energy];
+    -- 证明非负，各项都是平方和非负数乘积
+    apply add_nonneg; apply add_nonneg;
+    exact sq_nonneg _; 
+    apply mul_nonneg; apply mul_nonneg; exact le_of_lt admm.htau.1; exact sq_nonneg _; exact sq_nonneg _
+    apply mul_nonneg; apply mul_nonneg; apply mul_nonneg; exact le_of_lt admm.htau.1;
+    exact le_of_lt HWY_thm4_1_ineq; exact sq_nonneg _; exact sq_nonneg _
+  · intro n; exact sq_nonneg (η_k n)
+  · -- η_k^2 可求和，这是 Condition_C1 的定义
+    exact Condition_C1.eta_square_summable'
+  · -- Quasi-Fejer 不等式
+    exact Energy_Quasi_Fejer
+
+-- 5. 证明全序列能量收敛到 0
+-- 利用子序列 (φ n) 收敛到 KKT 点，推出 Lyapunov_Energy (φ n) -> 0
+lemma Energy_Converges_to_Zero [Condition_C1 admm admm_kkt] :
+    Tendsto Lyapunov_Energy atTop (nhds 0) := by
+  -- 1. 既然全序列收敛到 l (由 Energy_Converges)
+  obtain ⟨l, hl⟩ := Energy_Converges
+  -- 2. 只需要证明有一个子序列收敛到 0，那么 l 必须为 0
+  suffices ∃ φ : ℕ → ℕ, StrictMono φ ∧ Tendsto (Lyapunov_Energy ∘ φ) atTop (nhds 0) by
+    rcases this with ⟨φ, hφ_mono, h_sub_lim⟩
+    have h_sub_l : Tendsto (Lyapunov_Energy ∘ φ) atTop (nhds l) := hl.comp hφ_mono.tendsto_atTop
+    have : l = 0 := tendsto_nhds_unique h_sub_l h_sub_lim
+    rw [this] at hl
+    exact hl
+  
+  -- 3. 构造子序列：我们已经有 φ (Subseq) 使得变量收敛到 (x₁'', x₂'', y'')
+  use φ
+  constructor
+  · exact hphi_StrictMono fullrank₁ fullrank₂
+  · -- 证明 V(φ n) -> 0
+    -- 展开 Lyapunov_Energy，利用连续性和 limits
+    -- x₁(φ n) -> x₁'', x₂(φ n) -> x₂'', y(φ n) -> y''
+    -- 且 ρ 有界 (Condition_C1 imply bounded)
+    dsimp [Lyapunov_Energy]
+    -- 下面证明每一项趋于 0
+    -- (a) ‖y (φ n) - y''‖^2 -> 0
+    have h_y : Tendsto (fun n => ‖y (φ n) - y''‖^2) atTop (nhds 0) := by
+      rw [← zero_pow two_ne_zero]
+      apply Tendsto.pow
+      apply tendsto_iff_norm_sub_tendsto_zero.mp (y_subseq_converge fullrank₁ fullrank₂)
+    
+    -- (b) 第二项 -> 0
+    -- 需要用到 ρₙ 的有界性 (Condition C1 imply convergent product imply bounded)
+    -- 以及 A₂ 连续性: A₂(x₂(φ n)) -> A₂(x₂'')
+    -- 从而 ‖A₂(x₂(φ n) - x₂'')‖ -> 0
+    have h_x2 : Tendsto (fun n => ‖A₂ (x₂ (φ n) - x₂'')‖^2) atTop (nhds 0) := by
+      -- ... 证明连续线性映射的极限 ...
+      sorry
+      
+    -- (c) 第三项 -> 0
+    -- 类似，利用 x₁, x₂ 收敛和 b 的等式
+    have h_res : Tendsto (fun n => ‖A₁ (x₁ (φ n)) + A₂ (x₂ (φ n)) - b‖^2) atTop (nhds 0) := by
+      -- ...
+      sorry
+      
+    -- 组合各项
+    -- 这里的系数 (τ * ρₙ^2) 是有界的，有界 * 趋于0 -> 趋于0
+    -- 最后 sum -> 0
+    sorry
+
+-- 6. 推导出变量的全序列收敛
+-- 因为 Lyapunov_Energy -> 0，且每一项非负，所以每一项都 -> 0
+-- 从而推出 y -> y'', A₂ x₂ -> A₂ x₂'' 等
+theorem x₁_converge_full [Condition_C1 admm admm_kkt] :
+    Tendsto x₁ atTop (nhds x₁'') := by
+  have hE := Energy_Converges_to_Zero
+  -- 展开 Lyapunov_Energy 的定义
+  -- 由于满秩条件 (fullrank1)，从 ‖A₁(x₁ n) - ...‖ -> 0 可以推出 x₁ n -> x₁''
+  sorry
+
+theorem x₂_converge_full [Condition_C1 admm admm_kkt] :
+    Tendsto x₂ atTop (nhds x₂'') := by
+  -- 同上，利用 fullrank2
+  sorry
+
+theorem y_converge_full [Condition_C1 admm admm_kkt] :
+    Tendsto y atTop (nhds y'') := by
+  have hE := Energy_Converges_to_Zero
+  -- 第一项就是 ‖y n - y''‖^2
+  -- 直接得出 y n -> y''
+  sorry
+
+end Full_Convergence
+
+-- 最终修改 ADMM_convergence 定理以使用 full convergence
+theorem ADMM_convergence_full [Condition_C1 admm admm_kkt] :
+      ∃ ( _x₁ : E₁) ( _x₂ : E₂) ( _y : F) , Convex_KKT _x₁ _x₂ _y admm.toOptProblem
+      ∧ ( Tendsto x₁ atTop (𝓝 _x₁) ∧ Tendsto x₂ atTop (𝓝 _x₂) ∧ Tendsto y atTop (𝓝 _y)) :=
+   ⟨x₁'', x₂'', y'', Iskktpair fullrank₁ fullrank₂ ,
+    x₁_converge_full fullrank₁ fullrank₂, 
+    x₂_converge_full fullrank₁ fullrank₂,
+    y_converge_full fullrank₁ fullrank₂⟩
+关键点解释：
+为什么之前的证明卡住了？ 之前的证明（ADMM_convergence）直接使用了 x₁_converge，而这个引理（在文件末尾）依赖于 e₁_converge_zero。e₁_converge_zero 依赖于 A₁e₁_converge_zero，这实际上是在证明残差收敛到 0。但是，残差收敛到 0 并不蕴含 变量收敛到最优解，除非序列是有界的并且所有聚点都是最优解。你已经有了子序列收敛，缺的是证明所有子序列都收敛到同一个点。通过证明 Lyapunov 函数（能量）趋于 0，我们强制了全序列收敛到该 KKT 点。
+
+Condition C1 的作用： 在 AdaptiveLemmas.lean 中，Condition_C1 包含了 $\sum \eta_k^2 < \infty$。这正是 Quasi-Fejér 序列收敛所需的条件。没有这个条件（即如果 $\rho$ 随意变化），算法确实可能不收敛。
+
+填补 sorry：
+
+Energy_Quasi_Fejer：这是最繁琐的一步。你需要回到 HWY_Lemma_3_1 (在论文中) 或你的 AdaptiveLemmas.lean，找到关于最优解 $(\lambda^, y^)$ 的不等式。你现在的 HWY_ineq_51 是关于两个连续迭代点的。你需要的是论文中 Theorem 3.1 的直接推论（公式 33 -> 51）。
+convergence_of_quasi_monotone_sequence：这是纯数学分析问题。如果 Mathlib 中没有直接可用的，可以查找 "quasi-Fejer sequence convergence" 的 Lean 实现，或者手动证明（利用 $\prod (1+\eta_k^2)$ 有界）。
+这个结构将你的子序列收敛结果（KKT点的存在性）与自适应参数下的能量函数性质结合起来，从而证明全序列收敛。
+
+
+
+
+提示 Robbins-Siegmund 类引理是什么
+详细信息
+chat
+Robbins-Siegmund 引理（Robbins-Siegmund Lemma）是一个在概率论和优化理论中非常著名的数学工具，主要用于证明随机或确定性迭代序列的收敛性。
+
+在你的自适应 ADMM 证明背景下，它用于处理Quasi-Fejér 单调性（即距离函数不是严格单调递减，而是允许在一个可控范围内轻微增加）。
+
+1. 确定性形式 (Deterministic Version)
+虽然最初是为随机逼近提出的，但在确定性优化（如你的 ADMM 证明）中，我们使用的是它的确定性版本。
+
+定理陈述： 设 $v_n, a_n, b_n, c_n$ 是四个非负实数序列，且满足以下递归不等式： $$v_{n+1} \le (1 + a_n) v_n + b_n - c_n$$ 如果满足以下可求和条件：
+
+$\sum_{n=0}^{\infty} a_n < \infty$
+$\sum_{n=0}^{\infty} b_n < \infty$
+则我们可以得出两个重要结论：
+
+序列 $v_n$ 收敛到一个有限值 $v^*$（即 $\lim_{n \to \infty} v_n$ 存在）。
+减项序列可求和：$\sum_{n=0}^{\infty} c_n < \infty$（这通常蕴含 $\lim_{n \to \infty} c_n = 0$）。
+2. 在你的 ADMM 证明中的对应关系
+在 He, Yang, Wang (2000) 的论文中，虽然没有直呼其名，但定理 4.1 的证明逻辑完全依赖于这个引理的机制。
+
+： $$|\dots|_{k+1}^2 \le (1 + \eta_k^2) |\dots|_k^2 - C \cdot (\text{Residuals})$$
+
+这与 Robbins-Siegmund 引理的对应关系如下：
+
+$v_n$ (Lyapunov 函数/能量函数)： 。这就是我们在上一步代码中定义的 Lyapunov_Energy。
+$a_n$ (扰动项)： ，这正是为了满足 Robbins-Siegmund 引理的收敛条件。
+$b_n$ (加项)： 在你的情况下为 0。
+$c_n$ (残差项)： 。
+3. 引理在 Lean 4 证明中的作用
+你需要这个引理来完成最后的 sorry，逻辑如下：
+
+前提：你已经在 AdaptiveLemmas.lean 中证明了类似的递归不等式 HWY_ineq_51。
+应用引理：
+)，所以根据 Robbins-Siegmund 引理，Lyapunov_Energy 数列必然收敛。
+。
+结合子序列：
+Robbins-Siegmund 告诉我们 Lyapunov_Energy 全序列收敛到某值 $L$。
+你的 Subseq 证明告诉我们存在一个子序列使得 Lyapunov_Energy 收敛到 0（因为变量收敛到 KKT 点）。
+若全序列收敛，且子序列收敛到 0，则全序列极限 $L$ 必须为 0。
+4. 总结
+Robbins-Siegmund 类引理是解决“参数自适应导致单调性破坏”这一问题的核心数学工具。它保证了只要参数的变化量（$\eta_k^2$）是可求和的（即参数最终趋于稳定），算法依然保持收敛性质。
+
+
+
+提示 Robbins-Siegmund 引理的证明在哪里
+详细信息
+chat
+Robbins-Siegmund 引理的证明主要有两个来源：一个是其原始出处的概率论文献，另一个是你上传的 He, Yang, Wang (2000) 论文中针对该特定问题的确定性证明版本。
+
+1. 原始出处（经典概率论版本）
+这是该引理最著名的原始出处，通常处理随机变量（Supermartingales）：
+
+出处：Robbins, H., & Siegmund, D. (1971). "A Convergence Theorem for Non Negative Almost Supermartingales and Some Applications".
+收录于：Optimizing Methods in Statistics (pp. 233-257). Academic Press.
+内容：它证明了如果 $V_{n+1} \le V_n(1 + \alpha_n) + \beta_n - \gamma_n$，且 $\sum \alpha_n < \infty, \sum \beta_n < \infty$，则 $V_n$ 收敛且 $\sum \gamma_n < \infty$。
+2. 在你提供的论文中的证明（确定性版本）
+在你上传的 He, Yang, Wang (2000) 论文中，作者并没有直接引用 Robbins-Siegmund 引理，而是在 Theorem 4.1 的证明过程中直接推导了该引理的确定性版本。这是你进行 Lean 4 形式化时最直接的参考依据。
+
+具体位置如下：
+
+文件：A_1004603514434.pdf
+。
+论文中的证明逻辑步骤（对应你的形式化步骤）：
+
+建立递归不等式： ，得到了类似 Robbins-Siegmund 的不等式 (51)：
+
+证明有界性 (Boundedness)： 。 。这就是引理证明的第一步：证明 $V_n$ 有上界。
+
+证明残差收敛 (Summability of Residuals)： ，论文对不等式进行求和（telescoping sum 技巧）。 在公式 (54) 中，作者证明了残差项的无穷级数是收敛的： 。
+
+得出结论： 由级数收敛 $\sum (\dots) < \infty$ 推出通项趋于 0，即： 。
+
+3. 给你的 Lean 4 形式化建议
+你不需要去形式化 1971 年的原始概率论引理，你应该直接形式化论文中 Theorem 4.1 的证明过程。
+
+在你的 AdaptiveTheorem_converge.lean 中，你需要填补的 convergence_of_quasi_monotone_sequence 引理，本质上就是复现上述步骤 2 和 3。
+
+形式化思路：
+
+。
+Telescoping: 利用 Finset.sum_le_sum 或类似的求和放缩，证明 $\sum c_n$ (残差项) 被 $V_0 \cdot \prod (1+a_n)$ 加上各项扰动所控制。
+Limit: 使用 Summable.tendsto_atTop_zero，从 $\sum c_n < \infty$ 推出 $c_n \to 0$。
+这正是论文中从公式 (51) 到 (54) 所做的事情。
+
+
+提示 我现在在想得到V_k收敛怎么证明
+详细信息
+chat
+[cite_start] 。
+
+核心思想是利用拟 Fejér 单调性 (Quasi-Fejér Monotonicity)。你需要证明 $V_k$ 满足递归不等式：$V_{k+1} \le (1 + \eta_k^2)V_k - (\text{残差项})$。因为 $\sum \eta_k^2 < \infty$，通过连乘积控制，可以证明 $V_k$ 有界且收敛。
+
+以下是具体的 Lean 4 证明结构建议，你可以将其添加到 AdaptiveTheorem_converge.lean 中：
+
+1. 证明 $V_k$ 的递归不等式 (Quasi-Fejér Property)
+首先，你需要证明论文中公式 (51) 对应的引理。这实际上是你已经证明的 HWY_ineq_51 的一个变体，但针对的是任意解 $w^*$ 而不仅仅是相邻迭代点。
+
+-- 对应论文公式 (51)
+lemma Lyapunov_Quasi_Fejer [Condition_C1 admm admm_kkt] :
+    ∀ k, Lyapunov_Energy (k + 1) ≤ (1 + (η_k k)^2) * Lyapunov_Energy k := by
+  intro k
+  -- 这里需要利用 Theorem 3.1 (论文公式 33) 以及 beta 的放缩性质
+  -- 论文逻辑：
+  -- 1. V_{k+1} + ... ≤ V_k + ... (Theorem 3.1 / HWY_Theorem_3_1)
+  -- 2. 利用 (ρ_{k+1}/ρ_k)^2 ≤ 1 + η_k^2 (Condition C1) 对 V_k 前面的系数进行放缩
+  -- 3. 忽略掉负的残差项 (因为我们需要的是 ≤ 关系)
+  sorry 
+2. 利用连乘积证明有界性 (Boundedness)
+对应论文公式 (52) 和 (53)。如果 $\sum \eta_k^2 < \infty$，则无穷乘积 $\prod (1 + \eta_k^2)$ 收敛（有界）。
+
+-- 对应论文公式 (52)-(53)
+lemma Lyapunov_Bounded [Condition_C1 admm admm_kkt] :
+    IsBounded (range Lyapunov_Energy) := by
+  -- 1. 引用 Condition C1 中的 summable eta^2
+  have h_sum := Condition_C1.eta_square_summable'
+  
+  -- 2. 数学引理：若 a_k ≥ 0 且 ∑ a_k < ∞，则 ∏ (1+a_k) 收敛 (即有上界 P)
+  -- 在 Lean 中可以使用 `Multipliable` 相关定理或 Condition_C1.one_eta_square_multipliable
+  obtain ⟨P, hP⟩ := Condition_C1.one_eta_square_multipliable'
+  
+  -- 3. 利用 Lyapunov_Quasi_Fejer 递归推导
+  -- V_{k} ≤ V_0 * ∏_{i=0}^{k-1} (1 + η_i^2) ≤ V_0 * P
+  have h_bound : ∀ k, Lyapunov_Energy k ≤ Lyapunov_Energy 0 * P := by
+    -- 使用归纳法或连乘积的保序性
+    sorry
+    
+  -- 4. 结论：序列被 V_0 * P 上界控制，且由定义知 V_k ≥ 0，因此有界
+  sorry
+3. 证明收敛性 (Convergence)
+这是 Robbins-Siegmund 引理的确定性核心部分。
+
+数学原理： 设 $v_{k+1} \le (1+a_k)v_k$，其中 $v_k \ge 0, a_k \ge 0, \sum a_k < \infty$。 定义辅助序列 $u_k = v_k / \prod_{i=0}^{k-1} (1+a_i)$。 容易证明 $u_k$ 是单调递减的（因为 $u_{k+1} \le u_k$），且有下界 0。 根据单调有界收敛定理，$u_k$ 收敛。 因为 $\prod (1+a_i)$ 收敛，所以 $v_k$ 也收敛。
+
+-- 对应论文 Theorem 4.1 的逻辑
+lemma Lyapunov_Convergent [Condition_C1 admm admm_kkt] :
+    ∃ l, Tendsto Lyapunov_Energy atTop (nhds l) := by
+  -- 构造辅助序列 u_k
+  let P_partial (k : ℕ) := ∏ i in Finset.range k, (1 + (η_k i)^2)
+  let u (k : ℕ) := Lyapunov_Energy k / P_partial k
+  
+  -- 证明 u_k 单调递减
+  have u_mono : Antitone u := by
+    apply antitone_nat_of_succ_le
+    intro k
+    dsimp [u]
+    rw [div_le_div_iff]
+    · -- 展开 P_partial (k+1) = P_partial k * (1 + η_k^2)
+      -- 转化为证明 V_{k+1} ≤ V_k * (1 + η_k^2)
+      -- 这正是 Lyapunov_Quasi_Fejer
+      sorry 
+    · -- 分母正定性证明
+      sorry
+    · sorry
+
+  -- 证明 u_k 有下界 (由 V_k ≥ 0)
+  have u_bdd : BddBelow (range u) := by
+    use 0
+    intro x ⟨k, hk⟩
+    rw [← hk]
+    apply div_nonneg
+    · -- V_k 是范数平方和，非负
+      sorry 
+    · -- 乘积项非负
+      sorry
+
+  -- 1. u_k 收敛 (单调有界原理)
+  have h_u_conv := tendsto_atTop_ciInf u_mono u_bdd
+  
+  -- 2. P_partial 收敛 (由 Condition C1)
+  have h_P_conv : ∃ P, Tendsto P_partial atTop (nhds P) := by
+    -- 对应 Condition_C1.one_eta_square_multipliable
+    sorry
+
+  -- 3. V_k = u_k * P_partial k，所以 V_k 收敛到 (lim u) * (lim P)
+  apply Tendsto.mul h_u_conv h_P_conv
+总结
+[cite_start] ：
+
+放缩：利用 $\beta_{k+1}/\beta_k$ 的界建立 $V_{k+1} \le (1+\eta_k^2)V_k$。
+有界：累乘得到 $V_k \le P \cdot V_0$。
+收敛：构造除以累乘积的辅助数列，证明其单调递减。
+
+
+提示 你先用自然语言给我证明一下
+详细信息
+chat
+好的，我们用自然语言（数学分析的语言）来梳理一遍自适应 ADMM 全序列收敛的证明逻辑。
+
+这个证明的核心在于解决一个矛盾：经典 ADMM 依赖于距离函数的单调递减性（Fejér 单调性），但自适应罚参数破坏了这种单调性。
+
+我们通过构造一个**“拟单调”（Quasi-Monotone）**的 Lyapunov 函数来修复这个问题。以下是分步证明：
+
+第一步：定义 Lyapunov 函数（能量函数）
+首先，我们需要一个度量当前迭代点 $w^k = (x^k, y^k, \lambda^k)$ 与最优解集（KKT 点）$w^* = (x^, y^, \lambda^*)$ 之间“距离”的函数。
+
+： $$V_k(\rho_k) = |\lambda^k - \lambda^|^2 + \gamma \rho_k^2 |B(y^k - y^)|^2 + C(\rho_k) |Ax^k + By^k - b|^2$$ (注：这里 $\rho_k$ 即论文中的 $\beta_k$，$C(\rho_k)$ 是一个与 $\rho_k$ 有关的正系数)
+
+第二步：建立递归不等式（拟 Fejér 单调性）
+在经典 ADMM 中（$\rho_k \equiv \rho$），我们可以证明 $V_{k+1} \le V_k - \text{残差项}$。 但在自适应 ADMM 中，$\rho_{k+1}$ 可能不等于 $\rho_k$。
+
+利用论文中的推导（Theorem 3.1 和 Eq. ： $$V_{k+1}(\rho_{k+1}) \le V_k(\rho_k) + \underbrace{(\rho_{k+1}^2 - \rho_k^2) (\dots)}{\text{参数变化带来的扰动}} - \underbrace{(\text{非负残差项})}{\text{算法的下降量}}$$
+
+： $$V_{k+1} \le (1 + \eta_k^2) V_k - \text{残差项}$$
+
+这就是 Robbins-Siegmund 引理 的适用形式：虽然 $V_k$ 不是严格递减的，但在乘上一个有限倍率 $(1+\eta_k^2)$ 后是受控的。
+
+第三步：证明序列有界性
+我们需要证明 $V_k$ 不会发散到无穷大。 对上述不等式进行递归放大（忽略负的残差项）： $$V_{k+1} \le (1 + \eta_k^2) V_k \le (1 + \eta_k^2)(1 + \eta_{k-1}^2) V_{k-1} \dots$$ $$V_{k+1} \le V_0 \cdot \prod_{i=0}^{k} (1 + \eta_i^2)$$
+
+。 因此，$V_k$ 是有界的。这意味着迭代序列 ${w^k}$ 也是有界的。
+
+第四步：证明 $V_k$ 收敛（极限存在）
+我们想证明 $\lim_{k \to \infty} V_k$ 存在。 构造一个辅助数列 $U_k$： $$U_k = \frac{V_k}{\prod_{i=0}^{k-1} (1 + \eta_i^2)}$$
+
+检查 $U_k$ 的单调性： $$U_{k+1} = \frac{V_{k+1}}{\prod_{i=0}^{k} (1 + \eta_i^2)} \le \frac{(1+\eta_k^2)V_k}{\prod_{i=0}^{k} (1 + \eta_i^2)} = \frac{V_k}{\prod_{i=0}^{k-1} (1 + \eta_i^2)} = U_k$$
+
+因为 $U_k$ 是单调递减的，且由定义知 $V_k \ge 0 \implies U_k \ge 0$（有下界）。 根据单调有界收敛定理，$U_k$ 必定收敛。 又因为分母（无穷乘积）也收敛，所以 $V_k$ 的极限存在，记为 $L$。即： $$\lim_{k \to \infty} V_k = L$$
+
+第五步：连接子序列与全序列（完成证明）
+这一步是你 Lean 4 证明中缺少的“最后一公里”。
+
+子序列收敛：你已经在 Lean 中证明了存在一个子序列 ${w^{k_j}}$ 收敛到一个 KKT 点 $w^*$（即 Subseq）。
+能量函数在子序列上的极限：既然 $w^{k_j} \to w^$，根据 $V_k$ 的连续性定义，我们有： $$\lim_{j \to \infty} V_{k_j}(w^) = V(w^, w^) = 0$$ (注：这里 $V(w^, w^)$ 为 0 是显然的，因为距离函数的定义就是范数)
+全序列收敛：
+一方面，我们在第四步证明了全序列极限存在：$\lim_{k \to \infty} V_k(w^*) = L$。
+另一方面，我们刚刚发现该序列有一个子序列趋于 0。
+如果一个收敛序列有一个子序列趋于 0，那么整个序列的极限必须为 0。
+即 $L = 0$。
+结论
+因为 $\lim_{k \to \infty} V_k(w^) = 0$，且 $V_k$ 是各项非负平方项之和，这迫使每一项都趋于 0。 $$\implies |\lambda^k - \lambda^| \to 0, \quad |B(y^k - y^)| \to 0, \quad \dots$$ 这证明了全序列 $w^k$ 收敛到 $w^$。
+
+给 Lean 4 形式化的提示： 你在 Lean 中需要补充的正是第四步（利用 Robbins-Siegmund 构造辅助数列证明 $V_k$ 极限存在）和第五步（极限唯一性：全序列极限 = 子序列极限 = 0）。

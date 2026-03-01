@@ -1,0 +1,20 @@
+# Lean build artifacts
+.lake/
+build/
+.env
+
+# Lean package manager
+# lake-manifest.json
+
+# Editor files
+.lean/
+*.olean
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor backup files
+*~
+*.swp
+*.swo
