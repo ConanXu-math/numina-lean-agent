@@ -33,6 +33,7 @@ class TaskMetadata:
 
     # Optional fields - Result output
     result_dir: Optional[str | Path] = None  # Result output directory (JSON files)
+    log_dir: Optional[str | Path] = None  # Session log output directory (text logs)
     mcp_log_dir: Optional[str | Path] = None  # MCP log directory (sets $MCP_LOG_DIR)
     mcp_log_name: Optional[str] = None  # MCP log name (sets $MCP_LOG_NAME before claude command)
 
@@ -66,6 +67,8 @@ class TaskMetadata:
             self.prompt_file = Path(self.prompt_file).resolve()
         if self.result_dir:
             self.result_dir = Path(self.result_dir).resolve()
+        if self.log_dir:
+            self.log_dir = Path(self.log_dir).resolve()
         if self.mcp_log_dir:
             self.mcp_log_dir = Path(self.mcp_log_dir).resolve()
 
@@ -112,6 +115,7 @@ class TaskMetadata:
             "allow_sorry": self.allow_sorry,
             "sleep_between_rounds": self.sleep_between_rounds,
             "result_dir": str(self.result_dir) if self.result_dir else None,
+            "log_dir": str(self.log_dir) if self.log_dir else None,
             "mcp_log_dir": str(self.mcp_log_dir) if self.mcp_log_dir else None,
             "mcp_log_name": self.mcp_log_name,
             "permission_mode": self.permission_mode,
@@ -143,6 +147,7 @@ class TaskMetadata:
             allow_sorry=data.get("allow_sorry", False),
             sleep_between_rounds=data.get("sleep_between_rounds", 1.0),
             result_dir=data.get("result_dir"),
+            log_dir=data.get("log_dir"),
             mcp_log_dir=data.get("mcp_log_dir"),
             mcp_log_name=data.get("mcp_log_name"),
             permission_mode=data.get("permission_mode", "bypassPermissions"),

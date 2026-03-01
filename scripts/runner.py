@@ -24,6 +24,15 @@ sys.stderr.reconfigure(line_buffering=True)
 PAT_REASON = re.compile(r"(?m)^\s*END_REASON:(LIMIT|COMPLETE|SELECTED_TARGET_COMPLETE)\s*$", re.I)
 
 
+def append_to_log(log_file: Optional[Path], content: str):
+    """Append content to log file if enabled."""
+    if not log_file:
+        return
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(content)
+
+
 def get_line_counts(files: List[Path]) -> dict:
     """Get line counts for files. Returns {filename: line_count}."""
     counts = {}
@@ -39,6 +48,7 @@ def run_claude_once(
     args: List[str],
     env: Optional[dict] = None,
     cwd: Optional[Path] = None,
+    log_file: Optional[Path] = None,
 ) -> tuple[str, Optional[str], int]:
     """
     Execute a single claude command.
@@ -63,8 +73,22 @@ def run_claude_once(
 
     cp = subprocess.run(args, **kwargs)
     out = cp.stdout
+    err = cp.stderr
     sys.stdout.write(out)
     sys.stdout.flush()
+
+    stderr_section = "" if not err else f"{'-' * 80}\n[stderr]\n{err}"
+    append_to_log(
+        log_file,
+        (
+            f"\n{'=' * 80}\n"
+            f"COMMAND: {' '.join(args)}\n"
+            f"RETURN_CODE: {cp.returncode}\n"
+            f"{'-' * 80}\n"
+            f"{out}"
+            f"{stderr_section}\n"
+        ),
+    )
 
     m = PAT_REASON.search(out)
     reason = m.group(1).upper() if m else None
@@ -99,6 +123,7 @@ def run_claude_session(
     on_statement_change: Literal["error", "warn"] = "warn",
     git_commit_dir: Optional[Path] = None,
     result_dir: Optional[Path] = None,
+    log_file: Optional[Path] = None,
     task_id: Optional[str] = None,
     files_to_track: Optional[List[Path]] = None,
 ) -> tuple[str, int, List[RoundResult]]:
@@ -124,6 +149,15 @@ def run_claude_session(
         (end_reason, rounds_used, round_results)
     """
     print(f"[info] Using prompt:\n{prompt[:120]}{'...' if len(prompt) > 120 else ''}\n")
+    append_to_log(
+        log_file,
+        (
+            f"\n{'=' * 80}\n"
+            f"SESSION_START: {datetime.now().isoformat()}\n"
+            f"PROMPT_PREVIEW:\n{prompt[:500]}{'...' if len(prompt) > 500 else ''}\n"
+            f"{'=' * 80}\n"
+        ),
+    )
 
     # Build base command
     base = ["claude", "-p"]
@@ -212,7 +246,7 @@ def run_claude_session(
 
     # First call: new session
     round_start = time.time()
-    stdout, reason, returncode = run_claude_once(base + [prompt], env=env, cwd=cwd)
+    stdout, reason, returncode = run_claude_once(base + [prompt], env=env, cwd=cwd, log_file=log_file)
     round_duration = time.time() - round_start
     record_round(1, stdout, reason, returncode, round_duration)
     if git_commit_dir:
@@ -249,7 +283,7 @@ def run_claude_session(
                     print("[info] Verification failed, resending prompt...")
                     rounds += 1
                     round_start = time.time()
-                    stdout, reason, returncode = run_claude_once(base + [prompt], env=env, cwd=cwd)
+                    stdout, reason, returncode = run_claude_once(base + [prompt], env=env, cwd=cwd, log_file=log_file)
                     round_duration = time.time() - round_start
                     record_round(rounds, stdout, reason, returncode, round_duration)
                     if git_commit_dir:
@@ -274,10 +308,10 @@ def run_claude_session(
         round_start = time.time()
         if reason is None:
             print("[info] No END_REASON detected, continuing with prompt...")
-            stdout, reason, returncode = run_claude_once(base + [prompt], env=env, cwd=cwd)
+            stdout, reason, returncode = run_claude_once(base + [prompt], env=env, cwd=cwd, log_file=log_file)
         elif should_reset_session:
             print(f"[info] Resetting session after {consecutive_limits} consecutive LIMITs...")
-            stdout, reason, returncode = run_claude_once(base + [prompt], env=env, cwd=cwd)
+            stdout, reason, returncode = run_claude_once(base + [prompt], env=env, cwd=cwd, log_file=log_file)
             consecutive_limits = 0  # Reset counter after starting new session
         else:
             # Continue the same session
@@ -286,7 +320,7 @@ def run_claude_session(
                 cmd += ["--output-format", output_format]
             if permission_mode:
                 cmd += ["--permission-mode", permission_mode]
-            stdout, reason, returncode = run_claude_once(cmd + ["continue"], env=env, cwd=cwd)
+            stdout, reason, returncode = run_claude_once(cmd + ["continue"], env=env, cwd=cwd, log_file=log_file)
         round_duration = time.time() - round_start
 
         record_round(rounds, stdout, reason, returncode, round_duration)
@@ -319,8 +353,18 @@ def run_task(task: TaskMetadata) -> TaskResult:
     mcp_stats = None
     round_results: List[RoundResult] = []
     statement_changed = False
+    log_file: Optional[Path] = None
 
     try:
+        if task.log_dir:
+            log_dir_path = Path(task.log_dir)
+            log_dir_path.mkdir(parents=True, exist_ok=True)
+            log_file = log_dir_path / f"{task.task_id}.log"
+            append_to_log(
+                log_file,
+                f"TASK_START: {datetime.now().isoformat()}\nTASK_ID: {task.task_id}\n",
+            )
+
         # Get prompt
         prompt = task.get_prompt()
 
@@ -398,6 +442,7 @@ def run_task(task: TaskMetadata) -> TaskResult:
             on_statement_change=task.on_statement_change,
             git_commit_dir=git_commit_dir,
             result_dir=result_dir_path,
+            log_file=log_file,
             task_id=task.task_id,
             files_to_track=files_to_track,
         )
@@ -474,6 +519,18 @@ def run_task(task: TaskMetadata) -> TaskResult:
     print(f"  Duration: {result.duration_seconds:.1f}s")
     if statement_changed:
         print(f"  Statement changed: Yes")
+    if log_file:
+        print(f"  Session log: {log_file}")
+        append_to_log(
+            log_file,
+            (
+                f"TASK_END: {datetime.now().isoformat()}\n"
+                f"SUCCESS: {result.success}\n"
+                f"END_REASON: {result.end_reason}\n"
+                f"ROUNDS_USED: {result.rounds_used}\n"
+                f"DURATION_SECONDS: {result.duration_seconds:.1f}\n"
+            ),
+        )
 
     # Save final result to JSON if result_dir is specified
     # (Individual round results are already saved immediately during execution)

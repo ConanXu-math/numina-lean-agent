@@ -35,6 +35,7 @@ class ClaudeRunner:
         check: bool = True,
         sleep: float = 1.0,
         result_dir: Optional[str] = None,
+        log_dir: Optional[str] = None,
         mcp_log_name: Optional[str] = None,
         permission_mode: str = "bypassPermissions",
         json_output: bool = False,
@@ -52,6 +53,7 @@ class ClaudeRunner:
             check: Whether to check after completion
             sleep: Sleep between rounds (seconds)
             result_dir: Result directory (JSON files)
+            log_dir: Session log directory (text logs)
             mcp_log_name: MCP log name (sets $MCP_LOG_NAME)
             permission_mode: Permission mode
             json_output: Whether to use JSON output format
@@ -93,6 +95,7 @@ class ClaudeRunner:
             check_after_complete=check,
             sleep_between_rounds=sleep,
             result_dir=result_dir,
+            log_dir=log_dir,
             mcp_log_name=mcp_log_name,
             permission_mode=permission_mode,
             output_format="json" if json_output else None,
@@ -188,6 +191,7 @@ class ClaudeRunner:
         check: bool = True,
         sleep: float = 1.0,
         result_dir: Optional[str] = None,
+        log_dir: Optional[str] = None,
         permission_mode: str = "bypassPermissions",
         parallel: bool = False,
         max_workers: int = 1,
@@ -204,6 +208,7 @@ class ClaudeRunner:
             check: Whether to check after completion
             sleep: Sleep between rounds
             result_dir: Result directory (JSON files)
+            log_dir: Session log directory (text logs)
             permission_mode: Permission mode
             parallel: Whether to run in parallel
             max_workers: Maximum parallel workers
@@ -246,6 +251,7 @@ class ClaudeRunner:
                 check_after_complete=check,
                 sleep_between_rounds=sleep,
                 result_dir=result_dir,
+                log_dir=log_dir,
                 mcp_log_name=lean_file.stem,
                 permission_mode=permission_mode,
             )

@@ -1,74 +1,71 @@
-# Numina-Lean-Agent
+# Lean-ADMM + Numina-Lean-Agent 集成说明
 
-<div align="center">
-  <a href="https://arxiv.org/abs/2601.14027"><b>Paper</b></a> |
-  <a href="https://leandex.projectnumina.ai"><b>Leandex</b></a> |
-  <a href="https://demo.projectnumina.ai/"><b>Demo</b></a> |
-  <a href="https://github.com/project-numina/Numina-Putnam2025"><b>Putnam 2025</b></a>
-</div>
+## 目标
 
-<br>
+把 `adaptive admm/lean_admm` 的最后 translate 步骤（`math -> Lean4`）接入 `numina-lean-agent`，获得多轮修复和可验证闭环能力，同时保留原有 API 翻译路径作为回退。
 
-An agent built on Claude Code for formal theorem proving tasks. We used this system to prove all 12 problems from Putnam 2025, and completed a paper-level formalization of [Effective Brascamp-Lieb inequalities](https://arxiv.org/abs/2511.11091).
+## 当前状态
 
-## System Overview
+- 已在 `adaptive admm/lean_admm/alpha_evolve/translate_LLM.py` 中加入后端切换：
+  - `TRANSLATE_BACKEND=api`（默认）：走原始 `LLMClient` 路径
+  - `TRANSLATE_BACKEND=numina_agent` 或 `agent`：走 `scripts.run_claude` agent 路径
+- 已在 `__main__` 开启严格校验：
+  - 先执行 `check_math_form`（R1-R7）
+  - 校验失败则中止，不继续翻译 Lean
 
-<p align="center">
-  <a href="assets/Numina-LeanAgent-v3.png">
-    <img src="assets/Numina-LeanAgent-v3.png" alt="Numina-Lean-Agent system overview" width="900" />
-  </a>
-</p>
+## 端到端工作流
 
+1. 读取 Python 策略代码（默认 `openevolve_output/best/best_program.py`）
+2. `code -> math_form`：`get_math_form_from_code`
+3. `math_form -> check`：`check_math_form` + `parse_check_result`
+   - 若 `False`：打印问题并停止
+4. `math_form -> Lean`：`get_lean4_results`
+   - 根据 `TRANSLATE_BACKEND` 选择 `api` 或 `numina_agent`
+5. 输出最终 Lean 代码
 
-## Quick Start
+## Agent 模式细节
 
-### 1. Environment Setup
+当 `TRANSLATE_BACKEND=numina_agent` 时：
 
-Follow the setup guide to install Lean, Claude Code, and numina-lean-lsp-mcp:
-
-**[Tutorial: Setup Guide](tutorial/setup.md)**
-
-### 2. Run Our Agent
-
-See the usage guide for detailed instructions on running our agent:
-
-**[Tutorial: Usage Guide](tutorial/usage.md)**
-
-### Quick Example
+- 在 `alpha_evolve/.agent_translate_tmp/` 下创建：
+  - `translated_output.lean`
+  - `translate_agent_prompt.txt`
+- 调用：
 
 ```bash
-# Run on a single file
-python -m scripts.run_claude run leanproblems/Minif2f/mathd_algebra_478.lean \
-  --prompt-file config/prompt_complete_file.txt \
-  --max-rounds 5
-
-# Run batch tasks from config
-python -m scripts.run_claude batch config/config_minif2f.yaml
-
-# Run all .lean files in a folder
-python -m scripts.run_claude from-folder leanproblems/Minif2f \
-  --prompt-file config/prompt_complete_file.txt \
-  --max-rounds 5
+python -m scripts.run_claude run <target_file> \
+  --prompt-file <prompt_file> \
+  --cwd <repo_root> \
+  --max-rounds 3 \
+  --check True
 ```
 
-## Related Projects
+- 成功后读取 `translated_output.lean` 作为输出
+- 失败时自动回退到 `api` 翻译路径
 
-- [numina-lean-lsp-mcp](https://github.com/project-numina/lean-lsp-mcp) - MCP server for Lean LSP integration (based on [lean-lsp-mcp](https://github.com/oOo0oOo/lean-lsp-mcp))
-- [lean4-skills](https://github.com/cameronfreer/lean4-skills) - Claude Code skills for Lean 4
-- [Leandex](https://leandex.projectnumina.ai) - Semantic search for Lean codebases
+## 如何运行
 
-## Citation
-If you find the content of this project helpful, please cite our paper as follows:
+### 1) 默认 API 翻译
 
-```
-@article{liu2026numina,
-  title={Numina-Lean-Agent: An Open and General Agentic Reasoning System for Formal Mathematics},
-  author={Junqi Liu and Zihao Zhou and Zekai Zhu and Marco Dos Santos and Weikun He and Jiawei Liu and Ran Wang and Yunzhou Xie and Junqiao Zhao and Qiufeng Wang and Lihong Zhi and Jia Li and Wenda Li},
-  journal={arXiv preprint arXiv:2601.14027},
-  year={2026}
-}
+```bash
+python "adaptive admm/lean_admm/alpha_evolve/translate_LLM.py"
 ```
 
-## License
+### 2) Agent 翻译（推荐）
 
-MIT License
+```bash
+export TRANSLATE_BACKEND=numina_agent
+python "adaptive admm/lean_admm/alpha_evolve/translate_LLM.py"
+```
+
+## 依赖与注意事项
+
+- Agent 模式依赖 Claude CLI 和 MCP（lean-lsp）已可用
+- `--cwd` 目录需有正确的 MCP 配置
+- 项目路径包含空格（`adaptive admm`），请保持参数化调用（不要手写拼接 shell 字符串）
+
+## 下一步建议
+
+- 增加 `TRANSLATE_AGENT_MAX_ROUNDS` 环境变量，避免硬编码 `max_rounds=3`
+- 给临时输出加时间戳，避免每次覆盖同一个 `translated_output.lean`
+- 记录每次翻译的校验结果和最终后端来源（api / agent），便于对比质量与稳定性
